@@ -1,46 +1,78 @@
-from fastapi import APIRouter, HTTPException
-import secrets
+from fastapi import APIRouter, HTTPException, Header
+from pydantic import BaseModel
+import hashlib
+import uuid
 
 router = APIRouter()
 
-# Global dictionaries for local storage
-users_db = {}
-active_sessions = {}
+# Internal Business Object (UserBO)
+class UserBO:
+    def __init__(self, external_id: int, email: str, password_hash: str):
+        self.external_id = external_id
+        self.email = email
+        self.password_hash = password_hash
 
-@router.post('/register')
-def register(email: str, password: str):
-    # Check if the user already exists to avoid duplication
-    if email in users_db:
-        raise HTTPException(status_code=409, detail='User already exists')
+# Independent Pydantic Models for each endpoint
+class RegisterInput(BaseModel):
+    email: str
+    password: str
+
+class LoginInput(BaseModel):
+    email: str
+    password: str
+
+# Local storage with global dictionaries
+users_db = {}  # email -> UserBO
+active_sessions = {}  # token -> user_id (int)
+
+# Salted Hashing using hashlib.sha256
+def get_password_hash(password: str, salt: str):
+    password_with_salt = password + salt
+    return hashlib.sha256(password_with_salt.encode()).hexdigest()
+
+@router.post('/register') # Defaults to 200 status code
+def register(data: RegisterInput):
+    if data.email in users_db:
+        # Code 409
+        raise HTTPException(status_code=409, detail="User already exists")
     
-    # Unique integer external identifier for the user
+    # Requirement: Unique integer external identifier
     user_id = len(users_db) + 1
     
-    # Store the user information in our local dictionary
-    users_db[email] = {
-        'id': user_id,
-        'email': email,
-        'password': password
-    }
+    hashed_pwd = get_password_hash(data.password, data.email)
+    new_user = UserBO(external_id=user_id, email=data.email, password_hash=hashed_pwd)
     
-    # Return a 200 success response
-    return {'status': 'success', 'user_id': user_id}
+    users_db[data.email] = new_user
+    return {"status": "success", "user_id": user_id}
 
 @router.post('/login')
-def login(email: str, password: str):
-    # Retrieve the user from our local database
-    user = users_db.get(email)
+def login(data: LoginInput):
+    user_bo = users_db.get(data.email)
     
-    # Check if the user exists and if the password matches
-    if not user or user['password'] != password:
-        # The professor noted that 403 is used when credentials are not correct
-        raise HTTPException(status_code=403, detail='Invalid credentials')
+    # Requirement: Specific error codes (404 and 401)
+    if not user_bo:
+        raise HTTPException(status_code=404, detail="Email not registered")
     
-    # Generate a secure 32 character hexadecimal token
-    token = secrets.token_hex(16)
+    input_hash = get_password_hash(data.password, data.email)
+    if user_bo.password_hash != input_hash:
+        raise HTTPException(status_code=401, detail="Incorrect password")
     
-    # Store the session, linking the token to the user's unique ID
-    active_sessions[token] = user['id']
+    # Requirement: Unique token string using the uuid module
+    token = str(uuid.uuid4())
+    active_sessions[token] = user_bo.external_id
     
-    # Return the token to the user
-    return {'token': token}
+    return {"token": token}
+
+@router.post('/logout')
+def logout(Auth: str = Header(None)): # Header requirement: "Auth"
+    if Auth in active_sessions:
+        active_sessions.pop(Auth)
+    return {"status": "success"}
+
+@router.get('/introspect')
+def introspect(Auth: str = Header(None)):
+    user_id = active_sessions.get(Auth)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    return {"user_id": user_id}
