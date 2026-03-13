@@ -10,15 +10,14 @@ user_database = {}
 token_db = {}
 
 class LoginInput(BaseModel):
-    username: str
+    email: str 
     password: str
     
 class RegisterInput(BaseModel):
     username: str
     email: str
-    address: Optional[str]
+    address: Optional[str] = None
     password: str
-    
     
 class UserBO(BaseModel):
     username: str
@@ -34,14 +33,13 @@ class IntrospectOutput(BaseModel):
 def hash_password(random_string: str, password: str) -> str:
     return sha256((random_string + password).encode()).hexdigest()
 
-
 @router.post("/register")
 async def register(input: RegisterInput = Body()) -> dict:
     inner_object = UserBO(
         username = input.username,
         email = input.email,
         address = input.address,
-        password = hash_password(input.email, input.password)
+        hashed_password = hash_password(input.email, input.password)
     )
     
     if inner_object.email in user_database:
@@ -52,7 +50,6 @@ async def register(input: RegisterInput = Body()) -> dict:
     user_database[inner_object.email] = inner_object
     return {"status": "ok"}
 
-
 @router.post("/login")
 async def login(input: LoginInput = Body()) -> dict:
     if input.email not in user_database:
@@ -60,9 +57,10 @@ async def login(input: LoginInput = Body()) -> dict:
             status_code=404,
             detail="Email not registered"
         )
-    if hash_password(input.email, input.password) != user_database[input.email].password:
+        
+    if hash_password(input.email, input.password) != user_database[input.email].hashed_password:
         raise HTTPException(
-            status=401,
+            status_code=401,
             detail="Incorrect password"
         )
     
@@ -73,18 +71,17 @@ async def login(input: LoginInput = Body()) -> dict:
     token_db[random_id] = input.email
     return {"auth": random_id}
 
-
 @router.delete("/{id}")
 async def delete_user(id: str) -> dict:
-    del user_database[id]
+    if id in user_database:
+        del user_database[id]
     return {"status": "ok"}
-
 
 @router.get("/introspect")
 async def introspect(auth: str = Header()) -> IntrospectOutput:
     if auth not in token_db:
         raise HTTPException(
-            status=401,
+            status_code=401,
             detail="Incorrect token"
         )
     
