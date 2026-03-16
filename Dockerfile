@@ -2,6 +2,8 @@ FROM tiangolo/uvicorn-gunicorn:python3.10 AS carlemany-backend-base
 
 RUN pip install --upgrade pip
 
+RUN pip install black pytest pytest-env pytest-cov
+
 COPY requirements/base.txt /tmp/requirements/
 
 RUN pip install -r /tmp/requirements/base.txt
